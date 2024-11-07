@@ -24,6 +24,7 @@ import java.util.Map;
 
 public class Client extends Application {
 
+    private boolean cts = true;
     private TextField sendHost;
     private Spinner<Integer> sendPort;
     private TextField sendName;
@@ -115,6 +116,20 @@ public class Client extends Application {
         if (!isConnected)
             return;
 
+        primaryStage.setOnCloseRequest(event -> {
+            cts = false;
+            // Schicke Deregistrierungsnachricht an den Server
+            sendDeregisterMessage();
+            // Idle 500ms
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            // Schließe die Socket-Verbindung
+            closeSocket();
+        });
+
         sendMessage = new TextField();
         sendMessage.setPromptText("Nachricht...");
         sendMessage.setOnAction(event -> sendTextMessage());
@@ -164,10 +179,12 @@ public class Client extends Application {
         activeChatId = clientId;
         activeChatView.getChildren().clear();
 
+        // Zeige alle Nachrichten der entsprechenden Chat-Ansicht in activeChatView an
         if (chatViews.containsKey(clientId)) {
             activeChatView.getChildren().addAll(chatViews.get(clientId).getChildren());
         }
 
+        // Setze Schriftstärke des ausgewählten Teilnehmers auf normal
         clientListView.getItems().forEach(item -> {
             if (item.getId().equals(clientId)) {
                 ((Label) item.getChildren().get(1)).setStyle("-fx-font-weight: normal");
@@ -217,7 +234,8 @@ public class Client extends Application {
         String messageText = sendMessage.getText();
 
         if (activeChatId == null) {
-            showAlert("Nachrichtenfehler", "Kein Chat ausgewählt", "Bitte wähle einen Chat aus, bevor du eine Nachricht sendest.");
+            showAlert("Nachrichtenfehler", "Kein Chat ausgewählt",
+                    "Bitte wähle einen Chat aus, bevor du eine Nachricht sendest.");
             return;
         }
         if (messageText == null) {
@@ -226,7 +244,8 @@ public class Client extends Application {
         }
 
         if (clientId == null) {
-            showAlert("Nachricht konnte nicht gesendet werden", "Client-ID nicht verfügbar", "Bitte warte, bis die Client-ID zugewiesen wurde.");
+            showAlert("Nachricht konnte nicht gesendet werden", "Client-ID nicht verfügbar",
+                    "Bitte warte, bis die Client-ID zugewiesen wurde.");
             return;
         }
         // Prüfen, ob das Textfeld leer oder null ist
@@ -246,7 +265,7 @@ public class Client extends Application {
 
     private void listenForMessages() {
         try {
-            while (true) {
+            while (cts) {
                 int length = in.readInt();
                 byte[] messageBytes = new byte[length];
                 in.readFully(messageBytes);
@@ -255,6 +274,7 @@ public class Client extends Application {
                 Platform.runLater(() -> handleMessageFromServer(receivedMessage));
             }
         } catch (IOException e) {
+            if(cts)
             showAlert("Empfangsproblem", "Es ist ein Problem beim Empfangen aufgetreten.", e.getMessage());
         }
     }
@@ -268,7 +288,7 @@ public class Client extends Application {
             case "id_announcement":
                 String newClientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
                 String newClientId = new String(message.getDataFields().get(1), StandardCharsets.UTF_8);
-                chatNames.put(newClientId,newClientName);
+                chatNames.put(newClientId, newClientName);
                 byte[] imageBytes = message.getDataFields().size() > 2 ? message.getDataFields().get(2) : null;
                 Image newClientImage = imageBytes != null
                         ? new Image(new ByteArrayInputStream(imageBytes), 30, 30, true, true)
@@ -317,33 +337,31 @@ public class Client extends Application {
         int blue = (int) (color.getBlue() * 255);
         return "rgb(" + red + "," + green + "," + blue + ")";
     }
-    
 
     private void displayMessage(String sender, String message, Pos position, String chatId, Color bgColor) {
         // Erstelle das Label mit Nachrichtentext und Padding
         Label label = new Label(sender + ": " + message);
         label.setPadding(new Insets(10));
         label.setWrapText(true);
-        label.setStyle("-fx-background-color: " + toRgbString(bgColor) + "; -fx-background-radius: 10;"); // Hintergrundfarbe und Radius für Label
-    
+        label.setStyle("-fx-background-color: " + toRgbString(bgColor) + "; -fx-background-radius: 10;");
+
         // Erstelle die Box für die Nachricht und füge das Label hinzu
         HBox box = new HBox(label);
         box.setAlignment(position);
         box.setPadding(new Insets(5)); // Optional: zusätzlichen Abstand um die Box
         box.setSpacing(10); // Optional: Abstand zwischen Boxen
-    
-        // Füge die Nachricht der entsprechenden Chat-Ansicht hinzu
+
+        // Füge die Nachricht der entsprechenden Chat-Ansicht in chatViews hinzu
         if (!chatViews.containsKey(chatId)) {
             chatViews.put(chatId, new VBox());
         }
         chatViews.get(chatId).getChildren().add(box);
-    
-        // Zeige die Nachricht nur an, wenn der Chat aktiv ist
+
+        // Zeige die Nachricht nur an, wenn der Chat aktuell aktiv ist
         if (chatId.equals(activeChatId)) {
             activeChatView.getChildren().add(box);
         }
     }
-    
 
     private void markClientAsUnread(String clientId) {
         clientListView.getItems().forEach(item -> {
