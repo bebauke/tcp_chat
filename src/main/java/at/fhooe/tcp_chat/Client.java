@@ -22,6 +22,7 @@ public class Client extends Application {
     private TextField sendName;
     private TextField sendMessage;
     private VBox receiveMessages;
+    private ListView<String> clientListView;
     private Socket socket;
     private DataOutputStream out;
     private DataInputStream in;
@@ -98,18 +99,27 @@ public class Client extends Application {
         receiveMessages.setSpacing(10);
         receiveMessages.setPadding(new Insets(10));
 
+        clientListView = new ListView<>();
+        clientListView.setPlaceholder(new Label("Keine Clients verbunden"));
+        clientListView.setPrefWidth(150);
+
         Button sendButton = new Button("Senden");
         sendButton.setOnAction(event -> sendTextMessage());
 
         ScrollPane receivePane = new ScrollPane(receiveMessages);
         receivePane.setFitToWidth(true);
 
-        BorderPane mainLayout = new BorderPane();
-        mainLayout.setTop(createSettingsBar());
-        mainLayout.setCenter(receivePane);
-        mainLayout.setBottom(createSendPane(sendButton));
+        HBox sendPane = createSendPane(sendButton);
+        BorderPane chatLayout = new BorderPane();
+        chatLayout.setTop(createSettingsBar());
+        chatLayout.setCenter(receivePane);
+        chatLayout.setBottom(sendPane);
 
-        Scene scene = new Scene(mainLayout, 600, 400);
+        SplitPane splitPane = new SplitPane();
+        splitPane.getItems().addAll(clientListView, chatLayout);
+        splitPane.setDividerPositions(0.25);  // Setzt die Spaltenbreite auf 25% und 75%
+
+        Scene scene = new Scene(splitPane, 800, 500);
         primaryStage.setScene(scene);
         primaryStage.setTitle("Chat GUI");
         primaryStage.setOnCloseRequest(event -> {
@@ -149,12 +159,17 @@ public class Client extends Application {
     }
 
     private void sendTextMessage() {
-        Message textMessage = new Message("message");
-        textMessage.add(clientId);
-        textMessage.add(sendMessage.getText());
-        sendToServer(textMessage);
-        displayMessage("Ich", sendMessage.getText(), Pos.CENTER_RIGHT);
-        sendMessage.clear();
+        String selectedClient = clientListView.getSelectionModel().getSelectedItem();
+        if (selectedClient != null) {
+            Message textMessage = new Message("message");
+            textMessage.add(clientId);
+            textMessage.add(sendMessage.getText());
+            sendToServer(textMessage);
+            displayMessage("Ich", sendMessage.getText(), Pos.CENTER_RIGHT);
+            sendMessage.clear();
+        } else {
+            showAlert("Kein Chatpartner ausgewählt","Fehlende Info", "Bitte wähle einen Chatpartner aus der Liste.");
+        }
     }
 
     private void sendDeregisterMessage() {
@@ -191,13 +206,17 @@ public class Client extends Application {
     private void handleMessageFromServer(Message message) {
         switch (message.getType()) {
             case "id_announcement":
-                displayMessage("Server", "ID-Bekanntmachung: " + new String(message.getDataFields().get(0), StandardCharsets.UTF_8), Pos.CENTER_LEFT);
+                String newClientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
+                Platform.runLater(() -> clientListView.getItems().add(newClientName));
+                displayMessage("Server", "Neuer Client verbunden: " + newClientName, Pos.CENTER_LEFT);
                 break;
             case "message":
                 displayMessage("Anderer", new String(message.getDataFields().get(1), StandardCharsets.UTF_8), Pos.CENTER_LEFT);
                 break;
             case "deregister":
-                displayMessage("Server", "Teilnehmer abgemeldet: " + new String(message.getDataFields().get(0), StandardCharsets.UTF_8), Pos.CENTER_LEFT);
+                String disconnectedClientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
+                Platform.runLater(() -> clientListView.getItems().remove(disconnectedClientName));
+                displayMessage("Server", "Teilnehmer abgemeldet: " + disconnectedClientName, Pos.CENTER_LEFT);
                 break;
             default:
                 System.out.println("Unbekannter Nachrichtentyp: " + message.getType());
