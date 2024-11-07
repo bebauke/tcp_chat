@@ -6,9 +6,14 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+// import javafx.scene.image.Image;
+// import javafx.scene.image.PixelReader;
+// import javafx.scene.image.WritableImage;
+// import javafx.scene.paint.Color;
+
 public class Server {
     private static final int PORT = 4000;
-    private static final Map<String, ClientHandler> clients = new HashMap<>();
+    static final Map<String, ClientHandler> clients = new HashMap<>();
 
     public static void main(String[] args) {
         System.out.println("Server gestartet...");
@@ -24,6 +29,17 @@ public class Server {
         }
     }
 
+    // Nachricht an einen bestimmten Client senden
+    static void sendMessageToClient(Message message, String recipientId) {
+        ClientHandler recipient = clients.get(recipientId);
+        if (recipient != null) {
+            recipient.sendMessage(message);
+        } else {
+            System.out.println("Empfänger mit ID " + recipientId + " nicht gefunden.");
+        }
+    }
+
+    // Nachricht an alle Clients senden, außer an den Sender
     static void broadcastMessage(Message message, String senderId) {
         for (ClientHandler client : clients.values()) {
             if (!client.getClientId().equals(senderId)) {
@@ -49,6 +65,7 @@ class ClientHandler implements Runnable {
     private DataInputStream in;
     private String clientId;
     private String clientName;
+    protected byte[] clientImage;
 
     public ClientHandler(Socket socket) {
         this.socket = socket;
@@ -60,24 +77,55 @@ class ClientHandler implements Runnable {
             in = new DataInputStream(socket.getInputStream());
             out = new DataOutputStream(socket.getOutputStream());
 
-            // Anmeldenachricht empfangen
-            int length = in.readInt();  // Lesen der Länge des Nachrichten-Byte-Arrays
+            // Empfang der Anmeldenachricht
+            int length = in.readInt();
             byte[] messageBytes = new byte[length];
             in.readFully(messageBytes);
             Message message = new Message(ByteBuffer.wrap(messageBytes));
 
             if (message.getType().equals("register")) {
                 clientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
-                clientId = UUID.randomUUID().toString(); // Generiere eine eindeutige ID
+                clientId = UUID.randomUUID().toString();
+
+                // Speichert das Profilbild des Clients (falls vorhanden)
+                if (message.getDataFields().size() > 1) {
+                    byte[] originalImage = message.getDataFields().get(1);
+
+                    try {
+                        // Zuschneiden auf ein Rechteck von 40x40 Pixeln
+                        clientImage = cropImageToRectangle(originalImage, 40, 40);
+                    } catch (IOException e) {
+                        System.err.println("Fehler beim Zuschneiden des Profilbildes: " + e.getMessage());
+                        clientImage = originalImage; // Verwende das Originalbild, falls das Zuschneiden fehlschlägt
+                    }
+                }
 
                 Server.addClient(clientId, this);
                 System.out.println("Neuer Client verbunden: Name = " + clientName + ", ID = " + clientId);
+                Message idAssignmentMessage = new Message("id_assignment");
+                idAssignmentMessage.add(clientId);
+                sendMessage(idAssignmentMessage);
 
-                // ID-Bekanntmachung an alle Clients
-                Message idAnnouncement = new Message("id_announcement");
-                idAnnouncement.add(clientName);
-                idAnnouncement.add(clientId);
-                Server.broadcastMessage(idAnnouncement, clientId);
+                // Abrufen der Liste aller Clients und Senden an den neuen Client
+                for (ClientHandler client : Server.clients.values()) {
+                    if (client.clientId == clientId)
+                        continue;
+                    Message clientListMessage = new Message("id_announcement");
+                    clientListMessage.add(client.clientName);
+                    clientListMessage.add(client.clientId);
+                    if (client.clientImage != null) {
+                        clientListMessage.add(client.clientImage);
+                    }
+                    sendMessage(clientListMessage);
+                }
+                // Benachrichtigung aller anderen Clients über den neuen Client
+                Message newClientAnnouncement = new Message("id_announcement");
+                newClientAnnouncement.add(clientName);
+                newClientAnnouncement.add(clientId);
+                if (clientImage != null) {
+                    newClientAnnouncement.add(clientImage);
+                }
+                Server.broadcastMessage(newClientAnnouncement, clientId);
             }
 
             // Nachrichtenverarbeitung in einer Schleife
@@ -92,12 +140,10 @@ class ClientHandler implements Runnable {
             e.printStackTrace();
         } finally {
             Server.removeClient(clientId);
-            System.out.println(clientName + " (ID: " + clientId + ") hat die Verbindung getrennt.");
-            sendDeregisterMessage();
+            deregister();
             try {
                 socket.close();
             } catch (IOException e) {
-                System.err.println("Fehler beim Schließen der Verbindung mit " + clientName + " (ID: " + clientId + "): " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -106,27 +152,27 @@ class ClientHandler implements Runnable {
     private void handleClientMessage(Message message) {
         switch (message.getType()) {
             case "message":
-                // Nachricht an andere Clients senden
-                Message messageToSend = new Message("message");
-                messageToSend.add(clientId);
-                messageToSend.add(new String(message.getDataFields().get(1), StandardCharsets.UTF_8));
-                Server.broadcastMessage(messageToSend, clientId);
-                System.out.println("Nachricht von " + clientName + " (ID: " + clientId + "): " + new String(message.getDataFields().get(1), StandardCharsets.UTF_8));
+                message.edit(0, clientId); // Stelle sicher dass Absender nicht manipuliert wurde
+
+                // Extrahiere Empfänger-ID aus der Nachricht und sende nur an diesen Empfänger
+                String recipientId = new String(message.getDataFields().get(1), StandardCharsets.UTF_8);
+                Server.sendMessageToClient(message, recipientId); // Senden an den vorgesehenen Empfänger
                 break;
+
             case "deregister":
-                // Client abmelden und Nachricht an andere Clients senden
-                sendDeregisterMessage();
+                deregister();
                 break;
+
             default:
-                System.out.println("Unbekannter Nachrichtentyp von " + clientName + " (ID: " + clientId + "): " + message.getType());
+                System.out.println("Unbekannter Nachrichtentyp von " + clientName + " (ID: " + clientId + "): "
+                        + message.getType());
         }
     }
 
-    private void sendDeregisterMessage() {
+    private void deregister() {
         Message deregisterMessage = new Message("deregister");
         deregisterMessage.add(clientId);
         Server.broadcastMessage(deregisterMessage, clientId);
-        System.out.println("Abmeldung von " + clientName + " (ID: " + clientId + ") an alle gesendet.");
     }
 
     public String getClientId() {
@@ -136,11 +182,45 @@ class ClientHandler implements Runnable {
     public void sendMessage(Message message) {
         try {
             byte[] messageBytes = message.toBytes();
-            out.writeInt(messageBytes.length);  // Länge der Nachricht
+            out.writeInt(messageBytes.length);
             out.write(messageBytes);
         } catch (IOException e) {
-            System.err.println("Fehler beim Senden der Nachricht an " + clientName + " (ID: " + clientId + "): " + e.getMessage());
             e.printStackTrace();
         }
     }
+
+    // Zuschneidemethode für das Profilbild
+    private byte[] cropImageToRectangle(byte[] imageData, int width, int height) throws IOException {
+        return imageData;
+        // ByteArrayInputStream inputStream = new ByteArrayInputStream(imageData);
+        // Image image = new Image(inputStream);
+
+        // // Überprüfen, ob das Bild geladen wurde
+        // if (image.isError()) {
+        // throw new IOException("Fehler beim Laden des Bildes.");
+        // }
+
+        // // Berechne das Seitenverhältnis und setze den Zuschnittbereich
+        // int cropWidth = (int) Math.min(image.getWidth(), width);
+        // int cropHeight = (int) Math.min(image.getHeight(), height);
+
+        // PixelReader pixelReader = image.getPixelReader();
+
+        // // Erstellen eines Byte-Arrays für die RGBA-Daten des zugeschnittenen Bildes
+        // ByteBuffer buffer = ByteBuffer.allocate(cropWidth * cropHeight * 4); // 4
+        // Bytes pro Pixel für RGBA
+
+        // for (int y = 0; y < cropHeight; y++) {
+        // for (int x = 0; x < cropWidth; x++) {
+        // Color color = pixelReader.getColor(x, y);
+        // buffer.put((byte) (color.getRed() * 255)); // Rot
+        // buffer.put((byte) (color.getGreen() * 255)); // Grün
+        // buffer.put((byte) (color.getBlue() * 255)); // Blau
+        // buffer.put((byte) (color.getOpacity() * 255)); // Alpha
+        // }
+        // }
+
+        // return buffer.array();
+    }
+
 }

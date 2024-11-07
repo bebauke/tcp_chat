@@ -6,14 +6,21 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.scene.paint.Color;
+import javafx.scene.text.FontWeight;
 
 import java.io.*;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
+import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Client extends Application {
 
@@ -21,13 +28,17 @@ public class Client extends Application {
     private Spinner<Integer> sendPort;
     private TextField sendName;
     private TextField sendMessage;
-    private VBox receiveMessages;
-    private ListView<String> clientListView;
+    private VBox activeChatView;
+    private ListView<HBox> clientListView;
     private Socket socket;
     private DataOutputStream out;
     private DataInputStream in;
     private boolean isConnected = false;
     private String clientId;
+    private File imageFile;
+    private String activeChatId = null; // ID des aktuellen Chat-Partners
+    private Map<String, VBox> chatViews = new HashMap<>(); // Speichert die Chat-Ansichten für jeden Teilnehmer
+    private Map<String, String> chatNames = new HashMap<>();
 
     public static void main(String[] args) {
         Application.launch(args);
@@ -46,6 +57,18 @@ public class Client extends Application {
         Spinner<Integer> serverPortSpinner = new Spinner<>(0, 65535, 4000);
         TextField nameField = new TextField("Anonymous");
 
+        Button chooseImageButton = new Button("Profilbild auswählen");
+        Label imagePathLabel = new Label("Kein Bild ausgewählt");
+
+        chooseImageButton.setOnAction(event -> {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Profilbild auswählen");
+            imageFile = fileChooser.showOpenDialog(setupStage);
+            if (imageFile != null) {
+                imagePathLabel.setText(imageFile.getName());
+            }
+        });
+
         Button connectButton = new Button("Verbinden");
         connectButton.setOnAction(event -> {
             try {
@@ -56,11 +79,9 @@ public class Client extends Application {
                 sendHost = new TextField(serverIPField.getText());
                 sendPort = serverPortSpinner;
                 sendName = new TextField(nameField.getText());
-                clientId = UUID.randomUUID().toString();
                 isConnected = true;
 
-                // Anmeldung am Server
-                sendRegisterMessage(nameField.getText());
+                sendRegisterMessage(nameField.getText(), imageFile);
 
                 setupStage.close();
                 showMainGUI(primaryStage);
@@ -81,32 +102,42 @@ public class Client extends Application {
         setupLayout.add(serverPortSpinner, 1, 1);
         setupLayout.add(new Label("Name:"), 0, 2);
         setupLayout.add(nameField, 1, 2);
-        setupLayout.add(connectButton, 1, 3);
+        setupLayout.add(chooseImageButton, 0, 3);
+        setupLayout.add(imagePathLabel, 1, 3);
+        setupLayout.add(connectButton, 1, 4);
 
-        Scene setupScene = new Scene(setupLayout, 300, 200);
+        Scene setupScene = new Scene(setupLayout, 400, 250);
         setupStage.setScene(setupScene);
         setupStage.show();
     }
 
     private void showMainGUI(Stage primaryStage) {
-        if (!isConnected) return;
+        if (!isConnected)
+            return;
 
         sendMessage = new TextField();
         sendMessage.setPromptText("Nachricht...");
         sendMessage.setOnAction(event -> sendTextMessage());
 
-        receiveMessages = new VBox();
-        receiveMessages.setSpacing(10);
-        receiveMessages.setPadding(new Insets(10));
+        activeChatView = new VBox();
+        activeChatView.setSpacing(10);
+        activeChatView.setPadding(new Insets(10));
 
         clientListView = new ListView<>();
         clientListView.setPlaceholder(new Label("Keine Clients verbunden"));
         clientListView.setPrefWidth(150);
 
+        clientListView.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
+            if (newSelection != null) {
+                String selectedClientId = newSelection.getId();
+                selectChat(selectedClientId);
+            }
+        });
+
         Button sendButton = new Button("Senden");
         sendButton.setOnAction(event -> sendTextMessage());
 
-        ScrollPane receivePane = new ScrollPane(receiveMessages);
+        ScrollPane receivePane = new ScrollPane(activeChatView);
         receivePane.setFitToWidth(true);
 
         HBox sendPane = createSendPane(sendButton);
@@ -117,7 +148,7 @@ public class Client extends Application {
 
         SplitPane splitPane = new SplitPane();
         splitPane.getItems().addAll(clientListView, chatLayout);
-        splitPane.setDividerPositions(0.25);  // Setzt die Spaltenbreite auf 25% und 75%
+        splitPane.setDividerPositions(0.25);
 
         Scene scene = new Scene(splitPane, 800, 500);
         primaryStage.setScene(scene);
@@ -127,6 +158,21 @@ public class Client extends Application {
             closeSocket();
         });
         primaryStage.show();
+    }
+
+    private void selectChat(String clientId) {
+        activeChatId = clientId;
+        activeChatView.getChildren().clear();
+
+        if (chatViews.containsKey(clientId)) {
+            activeChatView.getChildren().addAll(chatViews.get(clientId).getChildren());
+        }
+
+        clientListView.getItems().forEach(item -> {
+            if (item.getId().equals(clientId)) {
+                ((Label) item.getChildren().get(1)).setStyle("-fx-font-weight: normal");
+            }
+        });
     }
 
     private HBox createSendPane(Button sendButton) {
@@ -152,39 +198,49 @@ public class Client extends Application {
         return settingsBar;
     }
 
-    private void sendRegisterMessage(String name) {
+    private void sendRegisterMessage(String name, File imageFile) {
         Message registerMessage = new Message("register");
         registerMessage.add(name);
+
+        if (imageFile != null) {
+            try {
+                byte[] imageBytes = Files.readAllBytes(imageFile.toPath());
+                registerMessage.add(imageBytes);
+            } catch (IOException e) {
+                showAlert("Bildproblem", "Fehler beim Lesen der Bilddatei.", e.getMessage());
+            }
+        }
         sendToServer(registerMessage);
     }
 
     private void sendTextMessage() {
-        String selectedClient = clientListView.getSelectionModel().getSelectedItem();
-        if (selectedClient != null) {
+        String messageText = sendMessage.getText();
+
+        if (activeChatId == null) {
+            showAlert("Nachrichtenfehler", "Kein Chat ausgewählt", "Bitte wähle einen Chat aus, bevor du eine Nachricht sendest.");
+            return;
+        }
+        if (messageText == null) {
+            showAlert("Nachrichtenfehler", "Nachricht leer", "Bitte gib eine Nachricht ein, bevor du sie sendest.");
+            return;
+        }
+
+        if (clientId == null) {
+            showAlert("Nachricht konnte nicht gesendet werden", "Client-ID nicht verfügbar", "Bitte warte, bis die Client-ID zugewiesen wurde.");
+            return;
+        }
+        // Prüfen, ob das Textfeld leer oder null ist
+        if (activeChatId != null && messageText != null && !messageText.trim().isEmpty()) {
             Message textMessage = new Message("message");
-            textMessage.add(clientId);
-            textMessage.add(sendMessage.getText());
+            textMessage.add(clientId); // Client-ID des Senders
+            textMessage.add(activeChatId); // ID des Empfängers
+            textMessage.add(messageText); // Nachrichtentext
+
             sendToServer(textMessage);
-            displayMessage("Ich", sendMessage.getText(), Pos.CENTER_RIGHT);
+            displayMessage("Ich", messageText, Pos.CENTER_RIGHT, activeChatId, Color.LIGHTBLUE);
             sendMessage.clear();
         } else {
-            showAlert("Kein Chatpartner ausgewählt","Fehlende Info", "Bitte wähle einen Chatpartner aus der Liste.");
-        }
-    }
-
-    private void sendDeregisterMessage() {
-        Message deregisterMessage = new Message("deregister");
-        deregisterMessage.add(clientId);
-        sendToServer(deregisterMessage);
-    }
-
-    private void sendToServer(Message message) {
-        try {
-            byte[] messageBytes = message.toBytes();
-            out.writeInt(messageBytes.length);  // Länge der Nachricht
-            out.write(messageBytes);
-        } catch (IOException e) {
-            showAlert("Sendeproblem", "Nachricht konnte nicht gesendet werden.", e.getMessage());
+            showAlert("Nachrichtenfehler", "Leere Nachricht", "Bitte gib eine Nachricht ein, bevor du sie sendest.");
         }
     }
 
@@ -205,39 +261,106 @@ public class Client extends Application {
 
     private void handleMessageFromServer(Message message) {
         switch (message.getType()) {
+            case "id_assignment":
+                clientId = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
+                System.out.println("Server hat ID zugewiesen: " + clientId);
+                break;
             case "id_announcement":
                 String newClientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
-                Platform.runLater(() -> clientListView.getItems().add(newClientName));
-                displayMessage("Server", "Neuer Client verbunden: " + newClientName, Pos.CENTER_LEFT);
+                String newClientId = new String(message.getDataFields().get(1), StandardCharsets.UTF_8);
+                chatNames.put(newClientId,newClientName);
+                byte[] imageBytes = message.getDataFields().size() > 2 ? message.getDataFields().get(2) : null;
+                Image newClientImage = imageBytes != null
+                        ? new Image(new ByteArrayInputStream(imageBytes), 30, 30, true, true)
+                        : null;
+
+                addClientToList(newClientName, newClientId, newClientImage);
                 break;
             case "message":
-                displayMessage("Anderer", new String(message.getDataFields().get(1), StandardCharsets.UTF_8), Pos.CENTER_LEFT);
+                String senderId = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
+                String name = chatNames.get(senderId);
+                String text = new String(message.getDataFields().get(2), StandardCharsets.UTF_8);
+                displayMessage(name, text, Pos.CENTER_LEFT, senderId, Color.LIGHTGREEN);
+
+                if (!senderId.equals(activeChatId)) {
+                    markClientAsUnread(senderId);
+                }
                 break;
             case "deregister":
-                String disconnectedClientName = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
-                Platform.runLater(() -> clientListView.getItems().remove(disconnectedClientName));
-                displayMessage("Server", "Teilnehmer abgemeldet: " + disconnectedClientName, Pos.CENTER_LEFT);
+                String disconnectedClientId = new String(message.getDataFields().get(0), StandardCharsets.UTF_8);
+                Platform.runLater(
+                        () -> clientListView.getItems().removeIf(hbox -> hbox.getId().equals(disconnectedClientId)));
                 break;
             default:
                 System.out.println("Unbekannter Nachrichtentyp: " + message.getType());
         }
     }
 
-    private void displayMessage(String sender, String message, Pos position) {
+    private void addClientToList(String name, String id, Image profileImage) {
+        Platform.runLater(() -> {
+            HBox clientBox = new HBox(5);
+            ImageView imageView = new ImageView(profileImage);
+            imageView.setFitHeight(30);
+            imageView.setPreserveRatio(true);
+            Label nameLabel = new Label(name);
+            clientBox.getChildren().addAll(imageView, nameLabel);
+            clientBox.setId(id);
+            clientListView.getItems().add(clientBox);
+
+            chatViews.put(id, new VBox());
+        });
+    }
+
+    private String toRgbString(Color color) {
+        int red = (int) (color.getRed() * 255);
+        int green = (int) (color.getGreen() * 255);
+        int blue = (int) (color.getBlue() * 255);
+        return "rgb(" + red + "," + green + "," + blue + ")";
+    }
+    
+
+    private void displayMessage(String sender, String message, Pos position, String chatId, Color bgColor) {
+        // Erstelle das Label mit Nachrichtentext und Padding
         Label label = new Label(sender + ": " + message);
         label.setPadding(new Insets(10));
         label.setWrapText(true);
+        label.setStyle("-fx-background-color: " + toRgbString(bgColor) + "; -fx-background-radius: 10;"); // Hintergrundfarbe und Radius für Label
+    
+        // Erstelle die Box für die Nachricht und füge das Label hinzu
         HBox box = new HBox(label);
         box.setAlignment(position);
-        receiveMessages.getChildren().add(box);
+        box.setPadding(new Insets(5)); // Optional: zusätzlichen Abstand um die Box
+        box.setSpacing(10); // Optional: Abstand zwischen Boxen
+    
+        // Füge die Nachricht der entsprechenden Chat-Ansicht hinzu
+        if (!chatViews.containsKey(chatId)) {
+            chatViews.put(chatId, new VBox());
+        }
+        chatViews.get(chatId).getChildren().add(box);
+    
+        // Zeige die Nachricht nur an, wenn der Chat aktiv ist
+        if (chatId.equals(activeChatId)) {
+            activeChatView.getChildren().add(box);
+        }
+    }
+    
+
+    private void markClientAsUnread(String clientId) {
+        clientListView.getItems().forEach(item -> {
+            if (item.getId().equals(clientId)) {
+                ((Label) item.getChildren().get(1)).setStyle("-fx-font-weight: bold");
+            }
+        });
     }
 
     private void showAlert(String title, String header, String content) {
-        Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle(title);
-        alert.setHeaderText(header);
-        alert.setContentText(content);
-        alert.showAndWait();
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle(title);
+            alert.setHeaderText(header);
+            alert.setContentText(content);
+            alert.showAndWait();
+        });
     }
 
     private void closeSocket() {
@@ -247,6 +370,22 @@ public class Client extends Application {
             }
         } catch (IOException e) {
             showAlert("Schließungsproblem", "Problem beim Schließen des Sockets.", e.getMessage());
+        }
+    }
+
+    private void sendDeregisterMessage() {
+        Message deregisterMessage = new Message("deregister");
+        deregisterMessage.add(clientId);
+        sendToServer(deregisterMessage);
+    }
+
+    private void sendToServer(Message message) {
+        try {
+            byte[] messageBytes = message.toBytes();
+            out.writeInt(messageBytes.length);
+            out.write(messageBytes);
+        } catch (IOException e) {
+            showAlert("Sendeproblem", "Nachricht konnte nicht gesendet werden.", e.getMessage());
         }
     }
 }

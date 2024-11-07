@@ -41,6 +41,14 @@ public class Message {
         dataFields.add(imageData);
     }
 
+    public void edit(int index, String value) {
+        dataFields.set(index, value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public void edit(int index, byte[] imageData) {
+        dataFields.set(index, imageData);
+    }
+
     // Methode zum Konvertieren der Nachricht in ein Byte-Array für die Übertragung
     public byte[] toBytes() {
         int totalLength = 4 + type.length();  // 4 Bytes für die Länge des Typs + Typ selbst
