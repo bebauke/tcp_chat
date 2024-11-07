@@ -19,6 +19,7 @@ public class Server {
                 new Thread(clientHandler).start();
             }
         } catch (IOException e) {
+            System.err.println("Fehler beim Starten des Servers: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -33,10 +34,12 @@ public class Server {
 
     static void addClient(String clientId, ClientHandler clientHandler) {
         clients.put(clientId, clientHandler);
+        System.out.println("Client hinzugefügt: ID = " + clientId);
     }
 
     static void removeClient(String clientId) {
         clients.remove(clientId);
+        System.out.println("Client entfernt: ID = " + clientId);
     }
 }
 
@@ -68,7 +71,7 @@ class ClientHandler implements Runnable {
                 clientId = UUID.randomUUID().toString(); // Generiere eine eindeutige ID
 
                 Server.addClient(clientId, this);
-                System.out.println(clientName + " (" + clientId + ") hat sich verbunden.");
+                System.out.println("Neuer Client verbunden: Name = " + clientName + ", ID = " + clientId);
 
                 // ID-Bekanntmachung an alle Clients
                 Message idAnnouncement = new Message("id_announcement");
@@ -85,14 +88,16 @@ class ClientHandler implements Runnable {
                 handleClientMessage(message);
             }
         } catch (IOException e) {
+            System.err.println("Verbindung zu " + clientName + " (ID: " + clientId + ") verloren.");
             e.printStackTrace();
         } finally {
             Server.removeClient(clientId);
-            System.out.println(clientName + " (" + clientId + ") hat die Verbindung getrennt.");
+            System.out.println(clientName + " (ID: " + clientId + ") hat die Verbindung getrennt.");
             sendDeregisterMessage();
             try {
                 socket.close();
             } catch (IOException e) {
+                System.err.println("Fehler beim Schließen der Verbindung mit " + clientName + " (ID: " + clientId + "): " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -106,13 +111,14 @@ class ClientHandler implements Runnable {
                 messageToSend.add(clientId);
                 messageToSend.add(new String(message.getDataFields().get(1), StandardCharsets.UTF_8));
                 Server.broadcastMessage(messageToSend, clientId);
+                System.out.println("Nachricht von " + clientName + " (ID: " + clientId + "): " + new String(message.getDataFields().get(1), StandardCharsets.UTF_8));
                 break;
             case "deregister":
                 // Client abmelden und Nachricht an andere Clients senden
                 sendDeregisterMessage();
                 break;
             default:
-                System.out.println("Unbekannter Nachrichtentyp: " + message.getType());
+                System.out.println("Unbekannter Nachrichtentyp von " + clientName + " (ID: " + clientId + "): " + message.getType());
         }
     }
 
@@ -120,6 +126,7 @@ class ClientHandler implements Runnable {
         Message deregisterMessage = new Message("deregister");
         deregisterMessage.add(clientId);
         Server.broadcastMessage(deregisterMessage, clientId);
+        System.out.println("Abmeldung von " + clientName + " (ID: " + clientId + ") an alle gesendet.");
     }
 
     public String getClientId() {
@@ -132,6 +139,7 @@ class ClientHandler implements Runnable {
             out.writeInt(messageBytes.length);  // Länge der Nachricht
             out.write(messageBytes);
         } catch (IOException e) {
+            System.err.println("Fehler beim Senden der Nachricht an " + clientName + " (ID: " + clientId + "): " + e.getMessage());
             e.printStackTrace();
         }
     }
