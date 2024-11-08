@@ -12,10 +12,12 @@ import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.scene.paint.Color;
-import javafx.scene.text.FontWeight;
 
 import java.io.*;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,7 +26,7 @@ import java.util.Map;
 
 public class Client extends Application {
 
-    private boolean cts = true;
+    private volatile boolean cts = true;
     private TextField sendHost;
     private Spinner<Integer> sendPort;
     private TextField sendName;
@@ -40,6 +42,7 @@ public class Client extends Application {
     private String activeChatId = null; // ID des aktuellen Chat-Partners
     private Map<String, VBox> chatViews = new HashMap<>(); // Speichert die Chat-Ansichten für jeden Teilnehmer
     private Map<String, String> chatNames = new HashMap<>();
+    private Label statusLabel;
 
     public static void main(String[] args) {
         Application.launch(args);
@@ -54,12 +57,14 @@ public class Client extends Application {
         Stage setupStage = new Stage();
         setupStage.setTitle("Setup - Verbindungseinstellungen");
 
-        TextField serverIPField = new TextField("127.0.0.1");
+        TextField serverIPField = new TextField(); // Erst leer, wird durch UDP Broadcast gesetzt
         Spinner<Integer> serverPortSpinner = new Spinner<>(0, 65535, 4000);
         TextField nameField = new TextField("Anonymous");
 
         Button chooseImageButton = new Button("Profilbild auswählen");
         Label imagePathLabel = new Label("Kein Bild ausgewählt");
+
+        statusLabel = new Label("Warte auf Server-Einstellungen"); // Statusleiste anzeigen
 
         chooseImageButton.setOnAction(event -> {
             FileChooser fileChooser = new FileChooser();
@@ -106,10 +111,40 @@ public class Client extends Application {
         setupLayout.add(chooseImageButton, 0, 3);
         setupLayout.add(imagePathLabel, 1, 3);
         setupLayout.add(connectButton, 1, 4);
+        setupLayout.add(statusLabel, 1, 5); // Statuslabel hinzufügen
 
         Scene setupScene = new Scene(setupLayout, 400, 250);
         setupStage.setScene(setupScene);
         setupStage.show();
+
+        // Starte den UDP Broadcast Listener in einem neuen Thread
+        new Thread(() -> listenForServerBroadcast(serverIPField, serverPortSpinner)).start();
+    }
+
+    private void listenForServerBroadcast(TextField serverIPField, Spinner<Integer> serverPortSpinner) {
+        try (DatagramSocket udpSocket = new DatagramSocket(8501)) {
+            udpSocket.setBroadcast(true);
+            byte[] buffer = new byte[256];
+
+            while (true) {
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                udpSocket.receive(packet);
+                String serverIP = packet.getAddress().getHostAddress();
+                String _serverPort = new String(packet.getData(), 0, packet.getLength());
+                int serverPort = Integer.parseInt(_serverPort);
+
+                // Setze die empfangene IP und aktualisiere den Status
+                Platform.runLater(() -> {
+                    serverIPField.setText(serverIP);
+                    serverPortSpinner.getValueFactory().setValue(serverPort);
+                    statusLabel.setText("Server gefunden: " + serverIP);
+                });
+            }
+        } catch (SocketException e) {
+            Platform.runLater(() -> statusLabel.setText("Fehler beim Erstellen des UDP-Sockets."));
+        } catch (IOException e) {
+            Platform.runLater(() -> statusLabel.setText("Fehler beim Empfangen der Server-Einstellungen."));
+        }
     }
 
     private void showMainGUI(Stage primaryStage) {
@@ -274,8 +309,8 @@ public class Client extends Application {
                 Platform.runLater(() -> handleMessageFromServer(receivedMessage));
             }
         } catch (IOException e) {
-            if(cts)
-            showAlert("Empfangsproblem", "Es ist ein Problem beim Empfangen aufgetreten.", e.getMessage());
+            if (cts == true)
+                showAlert("Empfangsproblem", "Es ist ein Problem beim Empfangen aufgetreten.", e.getMessage());
         }
     }
 

@@ -12,3 +12,21 @@ Implementieren Sie einen Chat-Server und einen Chat-Client, die über TCP/IP mit
 #### Optional
 - Gruppen von Clients erstellen und Nachrichten an Gruppen senden.
 - Foto von Client an Server senden, dann verteilen.
+
+### Anwendung der Software
+
+#### Server
+
+Der Server wird mit dem Befehl  
+``` bash
+java -jar .\server-1.0.jar
+```
+gestartet.
+
+#### Client
+
+Der Client wird mit dem Befehl
+``` bash
+java --module-path "C:\Users\<Userdir>\.m2\repository\org\openjfx\javafx-controls\21.0.5\javafx-controls-21.0.5-win.jar;C:\Users\<Userdir>\.m2\repository\org\openjfx\javafx-graphics\21.0.5\javafx-graphics-21.0.5-win.jar;C:\Users\<Userdir>\.m2\repository\org\openjfx\javafx-base\21.0.5\javafx-base-21.0.5-win.jar" --add-modules javafx.controls,javafx.graphics,javafx.base -jar .\client-1.0.jar
+```
+gestartet.

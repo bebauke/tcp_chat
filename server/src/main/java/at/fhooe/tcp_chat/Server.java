@@ -13,10 +13,16 @@ import java.util.*;
 
 public class Server {
     private static final int PORT = 4000;
+    private static final int BROADCAST_PORT = 8501; // UDP-Port für Broadcasts
+    private static final int BROADCAST_INTERVAL_MS = 5000; // Intervall von 5 Sekunden
     static final Map<String, ClientHandler> clients = new HashMap<>();
 
     public static void main(String[] args) {
         System.out.println("Server gestartet...");
+        
+        // Startet den Broadcast-Thread
+        new Thread(Server::startBroadcast).start();
+
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -28,6 +34,26 @@ public class Server {
             e.printStackTrace();
         }
     }
+
+    // Methode für den regelmäßigen Broadcast
+    private static void startBroadcast() {
+        try (DatagramSocket broadcastSocket = new DatagramSocket()) {
+            broadcastSocket.setBroadcast(true);
+            String broadcastMessage = (PORT)+"";
+            byte[] buffer = broadcastMessage.getBytes(StandardCharsets.UTF_8);
+            DatagramPacket packet = new DatagramPacket(buffer, buffer.length, InetAddress.getByName("255.255.255.255"), BROADCAST_PORT);
+
+            while (true) {
+                broadcastSocket.send(packet);
+                System.out.println("Broadcast gesendet: " + broadcastMessage);
+                Thread.sleep(BROADCAST_INTERVAL_MS); // Warten Sie 5 Sekunden
+            }
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Fehler beim Senden des Broadcasts: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
 
     // Nachricht an einen bestimmten Client senden
     static void sendMessageToClient(Message message, String recipientId) {
