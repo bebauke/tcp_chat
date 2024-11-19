@@ -1,7 +1,7 @@
-### TCP Chat Server und Client (Java - Penz und Bauke)
+### TCP Chat Server und Client (Java)
 
 #### Aufgabenstellung
-Implementieren Sie einen Chat-Server und einen Chat-Client, die über TCP/IP miteinander kommunizieren. Der Server soll mehrere Clients gleichzeitig bedienen können. Der Client soll eine einfache Benutzeroberfläche haben, über die der Benutzer Nachrichten an den Server senden kann. Der Server soll die Nachrichten an alle verbundenen Clients
+Implementieren Sie einen Chat-Server und einen Chat-Client, die über TCP/IP miteinander kommunizieren. Der Server soll mehrere Clients gleichzeitig bedienen können. Der Client soll eine einfache Benutzeroberfläche haben, über die der Benutzer Nachrichten an den Server senden kann. Der Server soll die Nachrichten an alle verbundenen Clients.
 
 #### Anforderungen
 - Der Server soll mehrere Clients gleichzeitig bedienen können.
